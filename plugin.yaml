@@ -1,4 +1,4 @@
 name: context-pruner
-version: "2.0"
+version: "2.1.1"
 description: "Always-On 3-tier smart pruning: Protected (keep), Summarizable (compress tool outputs), Reducible (delete). Runs before every LLM call."
 author: hermes-agent

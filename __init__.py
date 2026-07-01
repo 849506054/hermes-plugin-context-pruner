@@ -22,8 +22,6 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
-_CHECKPOINT_RE = re.compile(r"<!--\s*CHECKPOINT:\s*(.+?)\s*-->")
-
 # ── Constants ────────────────────────────────────────────────────────────
 PROTECTED_USER = 3      # keep this many most-recent user messages
 PROTECTED_ASST = 5      # keep this many most-recent assistant messages
@@ -41,8 +39,24 @@ ARCHIVE_SILENT = False          # set True to stop archive writes (stable stage)
 _archive_lock = threading.Lock()
 
 # ── Skip cache ──────────────────────────────────────────────────────────
-_skip_cache: tuple[int, str] | None = None
+_skip_cache: tuple[int, int] | None = None  # (count, content_hash)
 _skip_lock = threading.Lock()
+
+# ── Content-hash helper ────────────────────────────────────────────────
+def _quick_hash(messages: list[dict]) -> tuple[int, int]:
+    """Hash first 3 + last 3 messages as a fingerprint.
+
+    Only considers the last 80 chars of each sampled message's content.
+    When messages have the same count and same content boundaries,
+    pruning would produce the same result → safe to skip.
+    """
+    sample: list[str] = []
+    indices = [0, 1, 2, -3, -2, -1]
+    for i in indices:
+        if i < len(messages):
+            content = str(messages[i].get("content", ""))[-80:]
+            sample.append(f"{i}:{content}")
+    return (len(messages), hash("".join(sample)))
 
 
 # ═════════════════════════════════════════════════════════════════════════
@@ -74,13 +88,15 @@ def pruner_middleware(request, **context):
 
     msg_count = len(messages)
 
-    # ── Skip cache ──────────────────────────────────────────────────
-    cache_key = f"prune:{msg_count}"
+    # ── Skip cache (content-hash) ──────────────────────────────────────
+    _cache_key = _quick_hash(messages)
     global _skip_cache
     with _skip_lock:
-        if _skip_cache is not None and _skip_cache[0] == msg_count and _skip_cache[1] == cache_key:
-            return
-        _skip_cache = (msg_count, cache_key)
+        cached = _skip_cache is not None and _skip_cache == _cache_key
+    if cached:
+        return
+    with _skip_lock:
+        _skip_cache = _cache_key
 
     # ── Run pruning ─────────────────────────────────────────────────
     new_messages, dropped, stats = _prune(messages)
@@ -258,11 +274,7 @@ def _score_message(msg: dict, recent_paths: set, recent_refs: set) -> float:
     if not isinstance(content, str):
         content = ""
 
-    score = 1.0  # baseline
-
-    # User messages are inherently valuable
-    if role == "user":
-        score += 2.0
+    score = 1.5 if role == "assistant" else 0.5 if role == "tool" else 3.0 if role == "user" else 1.0  # baseline by role
 
     # Size penalty for tool outputs (biggest bloat culprits)
     if role == "tool" and len(content) > LARGE_OUTPUT:
