@@ -1,4 +1,4 @@
 name: context-pruner
-version: "2.1.1"
-description: "Always-On 3-tier smart pruning: Protected (keep), Summarizable (compress tool outputs), Reducible (delete). Runs before every LLM call."
+version: "3.0"
+description: "Session health maintenance for long sessions. Health gate (180 msg skip) + staleness detection + conservative 20% max pruning. Protects prompt-cache prefix."
 author: hermes-agent
